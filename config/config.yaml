@@ -1,0 +1,7 @@
+#config/config.yaml
+data_path: ../data/tiny_shakespeare.txt
+batch_size: 64
+seq_len: 128
+lr: 1e-4
+epochs: 10
+device: cuda
