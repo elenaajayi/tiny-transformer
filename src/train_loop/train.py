@@ -1,3 +1,4 @@
+
 """
 src/train_loop/train.py
 
@@ -15,9 +16,13 @@ Runs the full training process for our MiniTransformer model:
 5) Save the final model to disk.
 """
 
-import os #functions that interact with the opearting system
-import yaml  # Used to load hyperparameters from a YAML config file. Install with: pip install pyyaml
+import sys
+print("running train.py from:", __file__)
+print("   Python sys.path[0] is:", sys.path[0])
 
+
+import yaml  # Used to load hyperparameters from a YAML config file. Install with: pip install pyyaml
+from pathlib import Path # Simplifies file path manipulations
 # This allows easy parsing of YAML files into Python dictionaries,
 # making it simple to update and test different model training settings without changing the code.
 
@@ -25,28 +30,42 @@ import torch  # PyTorch library for tensors and GPU support
 import torch.nn as nn  # Neural network components (layers, loss functions)
 from torch.utils.data import DataLoader  # Manages batching and shuffling of data
 
+
 from src.model.mini_transformer import MiniTransformer  # Your custom GPT-style model
 from src.data.dataset import TextDataset  # Dataset that auto-downloads, tokenizes, and slices text
 
 #going to use a config file to make sure the code is clean and the parameneters are not a hassle to adjust
-config_file = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.yaml')
-with open (config_file, 'r') as f:
-    config = yaml.safe_load(f)
+# Get absolute path to config.yaml (most reliable method)
+project_root = Path.cwd()
+config_file = project_root / 'config' / 'config.yaml'
+config = yaml.safe_load(config_file.read_text())
 
+#get our hyperparams
 batch_size = config['batch_size'] # number of sequences per training batch
 epochs = config ['epochs'] # how many times am i going to loop over the dataset
 lr = config['lr'] # the step size for the optimizer
 seq_len = config ['seq_len'] #what is the  number of token per each input sequence
 #use the GPU for faster training =, otherwise use CPU
-device = config['device'] if torch.cuda.is_available() else 'cpu'
+device = 'cuda' if torch.cuda.is_available() and config['device']=='cuda' else 'cpu'
 
+#resoving data_path from config
 
-#now lest prepare the data
+data_path = Path(config['data_path'])
+if not data_path.is_absolute():
+    data_path = project_root / data_path
+print(f"Loading data from {data_path}")
+data_path.parent.mkdir(parents=True, exist_ok=True)
+#now lets prepare the data
 #TextDataset - handles the file donwload, vocab creation, and example slicing
 #DataLoader will batch examples and shuffle training robustness
 
 
-dataset = TextDataset(block_size=seq_len)
+
+print(f"loading dataset with block size={seq_len}, path={config['data_path']}")
+dataset = TextDataset(
+    block_size=seq_len,
+    file_path = config['data_path'])
+
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 #build the model, the loss, and the optimize
@@ -64,8 +83,6 @@ transformer_model = MiniTransformer(
     max_seq_len = seq_len,
     dropout = config.get('dropout', 0.1)
 ).to(device) # move the transformer to gpu is vaailable
-
-
 criterion = nn.CrossEntropyLoss() # loss for classification over the vocabulary
 optimizer = torch.optim.AdamW(transformer_model.parameters(), lr=lr) #optimizer with the weight decay
 
@@ -74,7 +91,7 @@ optimizer = torch.optim.AdamW(transformer_model.parameters(), lr=lr) #optimizer 
 print(f"training on {device} for {epochs} epochs...")
 for epoch in range(1, epochs + 1):
     transformer_model.train() # set the training mode
-    total_loss = 0.0
+    running_loss = 0.0
 
 for idx, (x, y) in enumerate(dataloader, start=1):
     #move data to GPU or CPU
@@ -99,22 +116,20 @@ for idx, (x, y) in enumerate(dataloader, start=1):
     optimizer.step()
 
     #accumulate loss for monitoring
-    total_loss += loss.item()
+    running_loss += loss.item()
 
     # every 100 batches, print the average loss so far
     if idx % 100 == 0:
-        avg = total_loss / idx
-        print(f"Epoch {epoch} Batch {idx}/{len(dataloader)} Loss {avg:.4f}")
+        print(f"Epoch {epoch} Batch {idx}/{len(dataloader)} Loss {running_loss/idx:.4f}")
     
-    # end of the epoch: get the overall average loss
-    avg_epoch = total_loss / len(dataloader)
-    print(f"Epoch {epoch} complete. Avg Loss {avg_epoch:.4f}\n")
+    print(f"Epoch {epoch} complete. Avg Loss: {running_loss/len(dataloader):.4f}\n")
+    
 
 
 #save the trained model
-os.makedirs('outputs/checkpoints', exist_ok=True)
-checkpoint_path = 'outputs/checkpoints/mini_transformer.pt'
-torch.save(transformer_model.state_dic(), checkpoint_path)
-print(f"Finished training. Model saved to {checkpoint_path}")
+output_dir = project_root / 'outputs' / 'checkpoints'
+output_dir.mkdir(parents=True, exist_ok=True)
+torch.save(transformer.state_dict(), output_dir / 'mini_transformer.pt')
+
 
 
